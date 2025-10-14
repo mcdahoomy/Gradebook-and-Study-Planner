@@ -1,9 +1,13 @@
 package com.dahoomy.gradebook;
 
+/**
+ * Converts a final % grade into a letter and a 4.0-scale point value.
+ * This is a generic scale; change it to match your university exactly.
+ */
 public final class GpaScale {
-    private GpaScale() {}
+    private GpaScale() {} // utility class: no instances
 
-    // Simple default scale (adjustable)
+    /** Map percentage to a letter grade. */
     public static String letterFor(double percent) {
         if (percent >= 90) return "A";
         if (percent >= 85) return "B+";
@@ -15,8 +19,8 @@ public final class GpaScale {
         return "F";
     }
 
+    /** Map percentage to 4.0 scale points. Adjust thresholds as needed. */
     public static double pointsFor(double percent) {
-        // Map letters to 4.0 scale (tweak to match your university exactly)
         if (percent >= 90) return 4.0;
         if (percent >= 85) return 3.5;
         if (percent >= 80) return 3.0;

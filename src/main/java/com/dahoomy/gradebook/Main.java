@@ -2,39 +2,61 @@ package com.dahoomy.gradebook;
 
 import java.util.*;
 
+/**
+ * Gradebook CLI
+ * -------------
+ * A small console app to track courses, assignments, and compute grades/GPA.
+ *
+ * How to use (examples):
+ *   add-course CMPS251 Programming_Concepts
+ *   set-credits CMPS251 3
+ *   add-assign CMPS251 Quiz1 18/20 10
+ *   list-assign CMPS251
+ *   grade CMPS251
+ *   gpa
+ */
+
 public class Main {
+
+    // Our "database": course code -> Course object
     private final Map<String, Course> courses = new HashMap<>();
 
     public static void main(String[] args) {
         new Main().run();
     }
 
+    /**
+     * Runs a simple REPL (read–eval–print loop).
+     * We read a line, decide which command it is, and call a helper method.
+     */
     private void run() {
         System.out.println("Gradebook CLI — type 'help' to begin.");
         try (Scanner scanner = new Scanner(System.in)) {
             while (true) {
                 System.out.print("> ");
                 if (!scanner.hasNextLine()) break;
-                String line = scanner.nextLine().trim();
-                if (line.isEmpty()) continue;
 
+                String line = scanner.nextLine().trim();
+                if (line.isEmpty()) continue;           // ignore blank lines
+
+                // Split into command + the rest (arguments)
                 String[] parts = line.split("\\s+", 2);
                 String cmd = parts[0].toLowerCase(Locale.ROOT);
-                String rest;
+                String args;
                 if (parts.length > 1) {
-                    rest = parts[1];
+                    args = parts[1];
                 } else {
-                    rest = "";
+                    args = "";
                 }
 
                 switch (cmd) {
                     case "help" -> printHelp();
-                    case "add-course" -> cmdAddCourse(rest);
-                    case "set-credits" -> cmdSetCredits(rest);
+                    case "add-course" -> cmdAddCourse(args);
+                    case "set-credits" -> cmdSetCredits(args);
                     case "list-courses" -> listCourses();
-                    case "add-assign" -> cmdAddAssign(rest);
-                    case "list-assign" -> cmdListAssign(rest);
-                    case "grade" -> cmdGrade(rest);
+                    case "add-assign" -> cmdAddAssign(args);
+                    case "list-assign" -> cmdListAssign(args);
+                    case "grade" -> cmdGrade(args);
                     case "gpa" -> cmdGpa();
                     case "exit", "quit" -> { System.out.println("Bye!"); return; }
                     default -> System.out.println("Unknown command. Type 'help'.");
@@ -43,6 +65,7 @@ public class Main {
         }
     }
 
+    /** Prints a short command reference. Keep this up to date as you add features. */
     private void printHelp() {
         System.out.println("""
                 Commands:
@@ -58,8 +81,13 @@ public class Main {
                 """);
     }
 
-    private void cmdAddCourse(String rest) {
-        String[] parts = rest.split("\\s+", 2);
+    /**
+     * add-course <code> <name>
+     * Example: add-course CMPS251 Programming_Concepts
+     * Rule: code must be unique.
+     */
+    private void cmdAddCourse(String args) {
+        String[] parts = args.split("\\s+", 2);
         if (parts.length < 2) {
             System.out.println("Usage: add-course <code> <name>");
             return;
@@ -70,12 +98,17 @@ public class Main {
             System.out.println("Course already exists.");
             return;
         }
+
         courses.put(code, new Course(code, name));
         System.out.println("Added: " + code + " — " + name);
     }
 
-    private void cmdSetCredits(String rest) {
-        String[] parts = rest.split("\\s+");
+    /**
+     * set-credits <code> <credits>
+     * Stores how many credit hours a course is worth (needed for GPA).
+     */
+    private void cmdSetCredits(String args) {
+        String[] parts = args.split("\\s+");
         if (parts.length != 2) {
             System.out.println("Usage: set-credits <code> <credits>");
             return;
@@ -98,40 +131,55 @@ public class Main {
         }
     }
 
+    /** Lists all courses with current credit hours and the total weight added so far. */
     private void listCourses() {
         if (courses.isEmpty()) {
             System.out.println("No courses yet.");
             return;
         }
-        courses.values().stream()
-                .sorted(Comparator.comparing(Course::code))
-                .forEach(c -> System.out.printf(
-                        "%s — %s [credits=%d, weight%% total=%.2f]\n",
-                        c.code(), c.name(), c.credits(), c.totalWeight()));
+
+        for (String code : courses.keySet().stream().sorted().toList()) {
+            Course c = courses.get(code);
+            System.out.printf(
+                    "%s — %s [credits=%d, weight%% total=%.2f]\n",
+                    c.code(), c.name(), c.credits(), c.totalWeight());
+        }
     }
 
-    private void cmdAddAssign(String rest) {
-        String[] p = rest.split("\\s+", 4);
+    /**
+     * add-assign <code> <name> <earned>/<max> <weight%>
+     * Example: add-assign CMPS251 Quiz1 18/20 10
+     *
+     * Notes:
+     * - weight% is the portion of the course grade this item contributes.
+     * - For a valid final grade, the sum of weights in a course must be 100%.
+     * - We validate numbers and ranges (e.g., earned cannot exceed max).
+     */
+    private void cmdAddAssign(String args) {
+        String[] p = args.split("\\s+", 4);
         if (p.length < 4) {
             System.out.println("Usage: add-assign <code> <name> <earned>/<max> <weight%>");
             return;
         }
+
         String code = p[0];
+        String name = p[1];
+        String ratio = p[2];      // "earned/max" (18/20)
+        String weightStr = p[3];  // "10" (for 10%)
+
         Course c = courses.get(code);
         if (c == null) {
             System.out.println("No such course.");
             return;
         }
-        String name = p[1];
-        String ratio = p[2];
-        String weightStr = p[3];
 
-        double earned, max;
+        // Parse earned/max
         if (!ratio.contains("/")) {
             System.out.println("Use <earned>/<max> like 18/20.");
             return;
         }
         String[] em = ratio.split("/");
+        double earned, max;
         try {
             earned = Double.parseDouble(em[0]);
             max = Double.parseDouble(em[1]);
@@ -148,6 +196,7 @@ public class Main {
             return;
         }
 
+        // Parse weight%
         double weight;
         try {
             weight = Double.parseDouble(weightStr);
@@ -160,6 +209,7 @@ public class Main {
             return;
         }
 
+        // Prevent going over 100%
         double newTotal = c.totalWeight() + weight;
         if (newTotal > 100.00001) {
             System.out.printf("Adding this would exceed 100%% (current %.2f%%).%n", c.totalWeight());
@@ -176,12 +226,13 @@ public class Main {
         }
     }
 
-    private void cmdListAssign(String rest) {
-        if (rest.isBlank()) {
+    /** Shows all assignments for a course in a quick, readable list. */
+    private void cmdListAssign(String args) {
+        if (args.isBlank()) {
             System.out.println("Usage: list-assign <code>");
             return;
         }
-        Course c = courses.get(rest.split("\\s+")[0]);
+        Course c = courses.get(args.split("\\s+")[0]);
         if (c == null) {
             System.out.println("No such course.");
             return;
@@ -198,12 +249,17 @@ public class Main {
         System.out.printf("Weight total: %.2f%%%n", c.totalWeight());
     }
 
-    private void cmdGrade(String rest) {
-        if (rest.isBlank()) {
+    /**
+     * grade <code>
+     * Prints the final percentage, letter, and points for a course.
+     * Requires that the course's weights sum to 100%.
+     */
+    private void cmdGrade(String args) {
+        if (args.isBlank()) {
             System.out.println("Usage: grade <code>");
             return;
         }
-        Course c = courses.get(rest.split("\\s+")[0]);
+        Course c = courses.get(args.split("\\s+")[0]);
         if (c == null) {
             System.out.println("No such course.");
             return;
@@ -213,28 +269,38 @@ public class Main {
             return;
         }
 
-        double pct = c.weightedPercentage();
+        double pct = c.weightedPercentage();  // e.g., 83.5
         System.out.printf("%s - %s%nFinal: %.2f%%%n", c.code(), c.name(), pct);
         System.out.printf("Letter: %s (4.0 scale %.2f)%n",
                 GpaScale.letterFor(pct), GpaScale.pointsFor(pct));
     }
 
+    /**
+     * gpa
+     * Computes GPA across all courses that:
+     *   - have credits set (>0), and
+     *   - have weights totaling 100% (so we know the final grade).
+     */
     private void cmdGpa() {
         // GPA uses courses that have credits > 0 AND whose weights sum to 100%
         double totalPointsTimesCredits = 0.0;
         int totalCredits = 0;
+
         for (Course c : courses.values()) {
             if (c.credits() <= 0) continue;
             if (Math.abs(c.totalWeight() - 100.0) > 1e-6) continue;
+
             double pct = c.weightedPercentage();
             double pts = GpaScale.pointsFor(pct);
             totalPointsTimesCredits += pts * c.credits();
             totalCredits += c.credits();
         }
+
         if (totalCredits == 0) {
             System.out.println("No GPA yet. Ensure courses have credits and weights sum to 100%.");
             return;
         }
+
         double gpa = totalPointsTimesCredits / totalCredits;
         System.out.printf("GPA across %d credits: %.3f%n", totalCredits, gpa);
     }

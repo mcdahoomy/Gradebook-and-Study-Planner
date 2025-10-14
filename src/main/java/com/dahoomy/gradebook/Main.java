@@ -28,15 +28,16 @@ public class Main {
                 }
 
                 switch (cmd) {
-                    case "help": printHelp();
-                    case "add-course":cmdAddCourse(rest);
-                    case "set-credits": cmdSetCredits(rest);
-                    case "list-courses": listCourses(rest);
-                    case "add-assign": cmdAddAssign(rest);
-                    case "list-assign": cmdListAssign(rest);
-                    case "grade": cmdGrade(rest);
-                    case "exit", "quit": System.out.println("Bye!"); return;
-                    default: System.out.println("Unknown command. Type 'help'.");
+                    case "help" -> printHelp();
+                    case "add-course" -> cmdAddCourse(rest);
+                    case "set-credits" -> cmdSetCredits(rest);
+                    case "list-courses" -> listCourses();
+                    case "add-assign" -> cmdAddAssign(rest);
+                    case "list-assign" -> cmdListAssign(rest);
+                    case "grade" -> cmdGrade(rest);
+                    case "gpa" -> cmdGpa();
+                    case "exit", "quit" -> { System.out.println("Bye!"); return; }
+                    default -> System.out.println("Unknown command. Type 'help'.");
                 }
             }
         }
@@ -58,7 +59,7 @@ public class Main {
     }
 
     private void cmdAddCourse(String rest) {
-        String[] parts = rest.split("\\s+",2);
+        String[] parts = rest.split("\\s+", 2);
         if (parts.length < 2) {
             System.out.println("Usage: add-course <code> <name>");
             return;
@@ -97,7 +98,7 @@ public class Main {
         }
     }
 
-    private  void listCourses() {
+    private void listCourses() {
         if (courses.isEmpty()) {
             System.out.println("No courses yet.");
             return;
@@ -150,19 +151,91 @@ public class Main {
         double weight;
         try {
             weight = Double.parseDouble(weightStr);
-             
-        } catch () {
-
+            if (weight <= 0) {
+                System.out.println("Weight% must be > 0.");
+                return;
+            }
+        } catch (NumberFormatException e) {
+            System.out.println("Invalid weight%.");
+            return;
         }
 
+        double newTotal = c.totalWeight() + weight;
+        if (newTotal > 100.00001) {
+            System.out.printf("Adding this would exceed 100%% (current %.2f%%).%n", c.totalWeight());
+            return;
+        }
+
+        c.addAssignment(new Assignment(name, earned, max, weight));
+        System.out.printf("Added assignment '%s' to %s (%.2f/%.2f, weight %.2f%%).%n",
+                name, c.code(), earned, max, weight);
+        if (Math.abs(newTotal - 100.0) < 1e-6) {
+            System.out.println("Heads up: weights now total 100% for this course.");
+        } else {
+            System.out.printf("weights total: %.2f%%%n", newTotal);
+        }
     }
 
-    private void cmdListAssign() {
-
+    private void cmdListAssign(String rest) {
+        if (rest.isBlank()) {
+            System.out.println("Usage: list-assign <code>");
+            return;
+        }
+        Course c = courses.get(rest.split("\\s+")[0]);
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (c.assignments().isEmpty()) {
+            System.out.println("No assignments yet.");
+            return;
+        }
+        int i = 1;
+        for (Assignment a : c.assignments()) {
+            System.out.printf("%d) %s  earned/max=%.2f/%.2f  weight=%.2f%%%n",
+                    i++, a.name(), a.earned(), a.max(), a.weightPercent());
+        }
+        System.out.printf("Weight total: %.2f%%%n", c.totalWeight());
     }
 
-    private void cmdGrade() {
+    private void cmdGrade(String rest) {
+        if (rest.isBlank()) {
+            System.out.println("Usage: grade <code>");
+            return;
+        }
+        Course c = courses.get(rest.split("\\s+")[0]);
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (Math.abs(c.totalWeight() - 100.0) > 1e-6) {
+            System.out.printf("Weights must total 100%% to compute final grade (current %.2f%%).%n", c.totalWeight());
+            return;
+        }
 
+        double pct = c.weightedPercentage();
+        System.out.printf("%s - %s%nFinal: %.2f%%%n", c.code(), c.name(), pct);
+        System.out.printf("Letter: %s (4.0 scale %.2f)%n",
+                GpaScale.letterFor(pct), GpaScale.pointsFor(pct));
     }
 
+    private void cmdGpa() {
+        // GPA uses courses that have credits > 0 AND whose weights sum to 100%
+        double totalPointsTimesCredits = 0.0;
+        int totalCredits = 0;
+        for (Course c : courses.values()) {
+            if (c.credits() <= 0) continue;
+            if (Math.abs(c.totalWeight() - 100.0) > 1e-6) continue;
+            double pct = c.weightedPercentage();
+            double pts = GpaScale.pointsFor(pct);
+            totalPointsTimesCredits += pts * c.credits();
+            totalCredits += c.credits();
+        }
+        if (totalCredits == 0) {
+            System.out.println("No GPA yet. Ensure courses have credits and weights sum to 100%.");
+            return;
+        }
+        double gpa = totalPointsTimesCredits / totalCredits;
+        System.out.printf("GPA across %d credits: %.3f%n", totalCredits, gpa);
+    }
 }

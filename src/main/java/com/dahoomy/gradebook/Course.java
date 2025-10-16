@@ -20,9 +20,9 @@ public final class Course {
     }
 
     // Simple accessors (methods instead of public fields to keep control)
-    public String code() { return code; }
-    public String name() { return name; }
-    public int credits() { return credits; }
+    public String getCode() { return code; }
+    public String getName() { return name; }
+    public int getCredits() { return credits; }
     public void setCredits(int credits) { this.credits = credits; }
 
     /**
@@ -33,6 +33,14 @@ public final class Course {
         return Collections.unmodifiableList(assignments);
     }
 
+    public int getAssignmentsCount() {
+        return assignments.size();
+    }
+
+    public Assignment getAssignment(int index) {
+        return assignments.get(index);
+    }
+
     /** Add one assignment to the course. Validation lives in Assignment itself. */
     public void addAssignment(Assignment a) {
         assignments.add(a);
@@ -41,7 +49,7 @@ public final class Course {
     /** Sum of all assignment weights (should be 100 for a finished course). */
     public double totalWeight() {
         double sum = 0.0;
-        for (Assignment a : assignments) sum += a.weightPercent();
+        for (Assignment a : assignments) sum += a.getWeightPercent();
         return sum;
     }
 
@@ -53,7 +61,7 @@ public final class Course {
     public double weightedPercentage() {
         double total = 0.0;
         for (Assignment a : assignments) {
-            double portion = (a.earned() / a.max()) * a.weightPercent();
+            double portion = (a.getEarned() / a.getMax()) * a.getWeightPercent();
             total += portion;
         }
         return total;

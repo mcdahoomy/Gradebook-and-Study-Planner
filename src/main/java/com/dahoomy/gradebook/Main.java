@@ -12,31 +12,29 @@ import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Gradebook (console)
- * -------------------
- * Now supports persistence:
- *   - save <file.csv>
- *   - load <file.csv>
+ * Gradebook (console) — now with:
+ *  1) Edit/delete assignment commands + a summary table for each course
+ *  2) Simple study planner (tasks with due dates) saved in the same CSV
  *
- * File format (CSV, one record per line):
- *   course,code,name,credits
- *   assign,courseCode,assignmentName,earned,max,weight
+ * NEW COMMANDS (gradebook):
+ *   edit-assign <code> <index> name|earned|max|weight <newValue>
+ *   del-assign  <code> <index>
+ *   set-weight  <code> <index> <newWeight>
+ *   course      <code>     // pretty table for one course
  *
- * Example:
- *   course,CMPS251,Programming_Concepts,3
- *   assign,CMPS251,Quiz1,18,20,10
- *   assign,CMPS251,Midterm,78,100,35
- *   assign,CMPS251,Final,82,100,55
+ * NEW COMMANDS (study planner):
+ *   plan-add    <code> <title> <YYYY-MM-DD>         // add a task for a course
+ *   plan-list   [code]                              // list tasks (optionally filter by course)
+ *   plan-done   <code> <index>                      // mark a task done
+ *   plan-del    <code> <index>                      // delete a task
  *
- * How to use (examples):
- *   add-course CMPS251 Programming_Concepts
- *   set-credits CMPS251 3
- *   add-assign CMPS251 Quiz1 18/20 10
- *   list-assign CMPS251
- *   grade CMPS251
- *   gpa
+ * CSV format now has 3 row types:
+ *   COURSE,code,name,credits
+ *   ASSIGN,courseCode,name,earned,max,weight
+ *   TASK,  courseCode,title,dueISO,status
+ *
+ * NOTE: Keep commas out of names/titles to keep parsing simple.
  */
-
 public class Main {
 
     // Our "database": course code -> Course object
@@ -72,15 +70,32 @@ public class Main {
 
                 switch (cmd) {
                     case "help" -> printHelp();
-                    case "add-course" -> cmdAddCourse(args);
-                    case "set-credits" -> cmdSetCredits(args);
-                    case "list-courses" -> listCourses();
-                    case "add-assign" -> cmdAddAssign(args);
-                    case "list-assign" -> cmdListAssign(args);
-                    case "grade" -> cmdGrade(args);
-                    case "gpa" -> cmdGpa();
+
+                    // gradebook basics
+                    case "add-course"  -> addCourseCmd(args);
+                    case "set-credits" -> setCreditsCmd(args);
+                    case "list-courses"-> listCoursesCmd();
+                    case "add-assign"  -> addAssignmentCmd(args);
+                    case "list-assign" -> listAssignmentsCmd(args);
+                    case "grade"       -> gradeCmd(args);
+                    case "gpa"         -> gpaCmd();
+
+                    // gradebook upgrades
+                    case "edit-assign" -> editAssignmentCmd(args);
+                    case "del-assign"  -> deleteAssignmentCmd(args);
+                    case "set-weight"  -> setWeightCmd(args);
+                    case "course"      -> courseSummaryCmd(args);
+
+                    // study planner
+                    case "plan-add"    -> planAddCmd(args);
+                    case "plan-list"   -> planListCmd(args);
+                    case "plan-done"   -> planDoneCmd(args);
+                    case "plan-del"   -> planDelCmd(args);
+
+                    // persistence
                     case "save" -> saveCmd(args);
                     case "load" -> loadCmd(args);
+
                     case "exit", "quit" -> { System.out.println("Bye!"); return; }
                     default -> System.out.println("Unknown command. Type 'help'.");
                 }
@@ -92,26 +107,38 @@ public class Main {
     private void printHelp() {
         System.out.println("""
                 Commands:
-                  add-course <code> <name>              — add a course (e.g., CMPS251 Programming Concepts)
-                  set-credits <code> <credits>          — set course credits (e.g., 3)
-                  list-courses                          — list all courses
-                  add-assign <code> <name> <e>/<m> <w>  — add assignment: earned/max weight%
-                                                        e.g., add-assign CMPS251 Quiz1 18/20 10
-                  list-assign <code>                    — list assignments of a course
-                  grade <code>                          — show weighted grade for course
-                  gpa                                   — compute GPA across all courses with credits
-                  save <file.csv>                       — saves info to file
-                  load <file.csv>                       — loads info from file
-                  exit                                  — quit
+                  add-course <code> <name>                                      — add a course (e.g., CMPS251 Programming Concepts)
+                  set-credits <code> <credits>                                  — set course credits (e.g., 3)
+                  list-courses                                                  — list all courses
+                  add-assign <code> <name> <e>/<m> <w>                          — add assignment: earned/max weight%
+                                                                                e.g., add-assign CMPS251 Quiz1 18/20 10
+                  list-assign <code>                                            — list assignments of a course
+                  edit-assign <code> <idx> name|earned|max|weight <newValue>    — edit assignment
+                  del-assign <code> <idx>                                       — delete assignment
+                  set-weight <code> <idx> <newWeight>                           — edit weight
+                  course <code>                                                 — show course in a pretty table
+                  grade <code>                                                  — show weighted grade for course
+                  gpa                                                           — compute GPA across all courses with credits
+                  plan-add <code> <title> <YYYY-MM-DD>                          — add a task for a course
+                  plan-list [code]                                              — list tasks (optionally filter by course)
+                  plan-done <code> <idx>                                        — mark a task done
+                  plan-del <code> <idx                                          — delete a task
+                  save <file.csv>                                               — saves info to file
+                  load <file.csv>                                               — loads info from file
+                  exit                                                          — quit
                 """);
     }
+
+    // ---------------------------
+    // Course-related commands
+    // ---------------------------
 
     /**
      * add-course <code> <name>
      * Example: add-course CMPS251 Programming_Concepts
      * Rule: code must be unique.
      */
-    private void cmdAddCourse(String args) {
+    private void addCourseCmd(String args) {
         String[] parts = args.split("\\s+", 2);
         if (parts.length < 2) {
             System.out.println("Usage: add-course <code> <name>");
@@ -132,7 +159,7 @@ public class Main {
      * set-credits <code> <credits>
      * Stores how many credit hours a course is worth (needed for GPA).
      */
-    private void cmdSetCredits(String args) {
+    private void setCreditsCmd(String args) {
         String[] parts = args.split("\\s+");
         if (parts.length != 2) {
             System.out.println("Usage: set-credits <code> <credits>");
@@ -157,7 +184,7 @@ public class Main {
     }
 
     /** Lists all courses with current credit hours and the total weight added so far. */
-    private void listCourses() {
+    private void listCoursesCmd() {
         if (courses.isEmpty()) {
             System.out.println("No courses yet.");
             return;
@@ -171,6 +198,10 @@ public class Main {
         }
     }
 
+    // ---------------------------
+    // Assignment-related commands
+    // ---------------------------
+
     /**
      * add-assign <code> <name> <earned>/<max> <weight%>
      * Example: add-assign CMPS251 Quiz1 18/20 10
@@ -180,7 +211,7 @@ public class Main {
      * - For a valid final grade, the sum of weights in a course must be 100%.
      * - We validate numbers and ranges (e.g., earned cannot exceed max).
      */
-    private void cmdAddAssign(String args) {
+    private void addAssignmentCmd(String args) {
         String[] p = args.split("\\s+", 4);
         if (p.length < 4) {
             System.out.println("Usage: add-assign <code> <name> <earned>/<max> <weight%>");
@@ -252,7 +283,7 @@ public class Main {
     }
 
     /** Shows all assignments for a course in a quick, readable list. */
-    private void cmdListAssign(String args) {
+    private void listAssignmentsCmd(String args) {
         if (args.isBlank()) {
             System.out.println("Usage: list-assign <code>");
             return;
@@ -274,12 +305,87 @@ public class Main {
         System.out.printf("Weight total: %.2f%%%n", c.totalWeight());
     }
 
+    private void editAssignmentCmd(String args) {
+        // edit-assign <code> <index> name|earned|max|weight <newValue>
+        String[] p = args.split("\\s+", 4);
+        if (p.length < 4) {
+            System.out.println("Usage: edit-assign <code> <index> name|earned|max|weight <newValue>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        String field = p[2].toLowerCase();
+        String newVal = p[3];
+
+        Course c = courses.get(code);
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (idx == null || idx < 1 || idx > c.getAssignmentsCount()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        Assignment a = c.getAssignment(idx - 1);
+
+        switch(field) {
+            case "name" -> {
+                if (newVal.isBlank()) {
+                    System.out.println("Name cannot be blank.");
+                    return;
+                }
+                a.setName(newVal);
+                System.out.println("Updated name.");
+            }
+            case "earned" -> {
+                Double v = tryParseDouble(newVal);
+                if (v == null || v < 0 || v > a.getMax()) {
+                    System.out.println("Invalid earned value.");
+                    return;
+                }
+                a.setEarned(v);
+                System.out.println("Updated earned.");
+            }
+            case "max" -> {
+                Double v = tryParseDouble(newVal);
+                if (v == null || v <= 0 || a.getEarned() > v) {
+                    System.out.println("Invalid max value.");
+                    return;
+                }
+                a.setMax(v);
+                System.out.println("Updated max.");
+            }
+            case "weight" -> {
+                Double v = tryParseDouble(newVal);
+                if (v == null || v <= 0) {
+                    System.out.println("Weight must be > 0.");
+                    return;
+                }
+                // Check the new total will not exceed 100%
+                double currentTotal = c.totalWeight() - a.getWeightPercent(); // remove old weight
+                if (currentTotal + v > 100.00001) {
+                    System.out.println("Changing weight would exceed 100% (current " + fmt2(currentTotal) + "%).");
+                    return;
+                }
+                a.setWeightPercent(v);
+                System.out.println("Updated weight. New total: " + fmt2(currentTotal + v) + "%");
+            }
+            default -> System.out.println("Unknown field. Use: name | earned | max | weight");
+        }
+    }
+
+    private void deleteAssignmentCmd(String args) {
+        // del-assign <code> <index>
+        String[] p = args.split("\\s+");
+
+    }
+
     /**
      * grade <code>
      * Prints the final percentage, letter, and points for a course.
      * Requires that the course's weights sum to 100%.
      */
-    private void cmdGrade(String args) {
+    private void gradeCmd(String args) {
         if (args.isBlank()) {
             System.out.println("Usage: grade <code>");
             return;
@@ -306,7 +412,7 @@ public class Main {
      *   - have credits set (>0), and
      *   - have weights totaling 100% (so we know the final grade).
      */
-    private void cmdGpa() {
+    private void gpaCmd() {
         // GPA uses courses that have credits > 0 AND whose weights sum to 100%
         double totalPointsTimesCredits = 0.0;
         int totalCredits = 0;
@@ -465,6 +571,8 @@ public class Main {
     private Double tryParseDouble(String s) {
         try { return Double.parseDouble(s); } catch (Exception e) { return null; }
     }
+
+    private String fmt2(double d) { return String.format(Locale.ROOT, "%.2f", d); }
 
     /** Format doubles like 10 or 10.5 (no trailing .0s in CSV). */
     private String trimZeros(double d) {

@@ -11,32 +11,42 @@ package com.dahoomy.gradebook;
  * The compact constructor below does sanity checks.
  */
 public class Assignment {
-    private final String name;
-    private final double earned;
-    private final double max;
-    private final double weightPercent;
+    private String name;
+    private double earned;
+    private double max;
+    private double weightPercent;
 
     public Assignment(String name, double earned, double max, double weightPercent) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("name blank");
-        }
-        if (max <= 0) {
-            throw new IllegalArgumentException("max <= 0");
-        }
-        if (earned < 0 || earned > max) {
-            throw new IllegalArgumentException("earned out of range");
-        }
-        if (weightPercent <= 0) {
-            throw new IllegalArgumentException("weight <= 0");
-        }
-        this.name = name;
-        this.earned = earned;
-        this.max = max;
-        this.weightPercent = weightPercent;
+        setName(name);
+        setMax(max);
+        setEarned(earned);        // must be after setMax
+        setWeightPercent(weightPercent);
     }
 
     public String getName() { return name; }
     public double getEarned() { return earned; }
     public double getMax() { return max; }
     public double getWeightPercent() { return weightPercent; }
+
+    public void setName(String name) {
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("name blank");
+        this.name = name;
+    }
+
+    public void setEarned(double earned) {
+        if (earned < 0 || earned > this.max) throw new IllegalArgumentException("earned out of range");
+        this.earned = earned;
+    }
+
+    public void setMax(double max) {
+        if (max <= 0) throw new IllegalArgumentException("max <= 0");
+        // If lowering max below current earned, reject
+        if (this.earned > 0 && this.earned > max) throw new IllegalArgumentException("max < current earned");
+        this.max = max;
+    }
+
+    public void setWeightPercent(double weightPercent) {
+        if (weightPercent <= 0) throw new IllegalArgumentException("weight <= 0");
+        this.weightPercent = weightPercent;
+    }
 }

@@ -1,12 +1,6 @@
 package com.dahoomy.gradebook;
 
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Scanner;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Collections;
-import java.util.Locale;
+import java.util.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
@@ -39,6 +33,7 @@ public class Main {
 
     // Our "database": course code -> Course object
     private final Map<String, Course> courses = new HashMap<>();
+    private final List<StudyTask> tasks = new ArrayList<>(); // planner items across courses
 
     public static void main(String[] args) {
         new Main().run();
@@ -377,7 +372,103 @@ public class Main {
     private void deleteAssignmentCmd(String args) {
         // del-assign <code> <index>
         String[] p = args.split("\\s+");
+        if (p.length != 2) {
+            System.out.println("Usage: del-assign <code> <index>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        Course c = courses.get(code);
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (idx == null || idx < 1 || idx > c.getAssignmentsCount()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        Assignment removed = c.removeAssignment(idx - 1);
+        System.out.println("Deleted: " + removed.getName() + ". New weight total: " + fmt2(c.totalWeight()) + "%");
+    }
 
+    private void setWeightCmd(String args) {
+        // set-weight <code> <index> <newWeight>
+        String[] p = args.split("\\s+");
+        if (p.length != 3) {
+            System.out.println("Usage: set-weight <code> <index> <newWeight>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        Double w = tryParseDouble(p[2]);
+        Course c = courses.get(code);
+        
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (idx == null || idx < 1 || idx > c.getAssignmentsCount()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        if (w == null || w <= 0) {
+            System.out.println("Weight must be > 0.");
+            return;
+        }
+        Assignment a = c.getAssignment(idx - 1);
+
+        double currentTotal = c.totalWeight() - a.getWeightPercent();
+        if (currentTotal + w > 100.00001) {
+            System.out.println("Changing weight would exceed 100% (current " + fmt2(currentTotal) + "%).");
+            return;
+        }
+        a.setWeightPercent(w);
+        System.out.println("Updated weight. New total: " + fmt2(currentTotal + w) + "%");
+    }
+
+    private void courseSummaryCmd(String args) {
+        // course <code> -> pretty table with contribution column
+        if (args.isBlank()) {
+            System.out.println("Usage: course <code>");
+            return;
+        }
+        String code = args.split("\\s+")[0];
+        Course c = courses.get(code);
+        if (c == null) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (c.getAssignmentsCount() == 0) {
+            System.out.println("No assignments yet");
+            return;
+        }
+
+        System.out.println("\nCourse: " + c.getCode() + " — " + c.getName() + "  [credits=" + c.getCredits() + "]");
+        System.out.println("--------------------------------------------------------------------------------");
+        System.out.printf("%-3s %-18s %10s %8s %10s %12s%n",
+                "#", "Name", "Earned/Max", "Score%", "Weight%", "Contrib%");
+        System.out.println("--------------------------------------------------------------------------------");
+
+        double totalContrib = 0.0;
+        for (int i = 0; i < c.getAssignmentsCount(); i++) {
+            Assignment a = c.getAssignment(i);
+            double scorePct = (a.getEarned() / a.getMax()) * 100.0;
+            double contrib = (a.getEarned() / a.getMax()) * a.getWeightPercent();
+            totalContrib += contrib;
+            System.out.printf("%-3d %-18s %5s/%-4s %7s %9s %11s%n",
+                    (i + 1),
+                    shorten(a.getName(), 18),
+                    fmt2(a.getEarned()), fmt2(a.getMax()),
+                    fmt2(scorePct), fmt2(a.getWeightPercent()), fmt2(contrib));
+        }
+        System.out.println("--------------------------------------------------------------------------------");
+        System.out.printf("%-3s %-18s %10s %8s %9s %12s%n", "", "Totals:", "", "", fmt2(c.totalWeight()), fmt2(totalContrib));
+        if (Math.abs(c.totalWeight() - 100.0) < 1e-6) {
+            System.out.println("Final percentage (weights=100%): " + fmt2(totalContrib) + "%");
+        } else {
+            System.out.println("Weights not at 100% yet. Current total: " + fmt2(c.totalWeight()) + "%");
+        }
+        System.out.println();
     }
 
     /**
@@ -436,6 +527,60 @@ public class Main {
         System.out.printf("GPA across %d credits: %.3f%n", totalCredits, gpa);
     }
 
+    // ---------------------------
+    // Study planner commands
+    // ---------------------------
+
+    private void planAddCmd(String args) {
+        // plan-add <code> <title> <YYYY-MM-DD>
+        String[] p = args.split("\\s+", 3);
+        if (p.length < 3) {
+            System.out.println("Usage: plan-add <code> <title> <YYYY-MM-DD>");
+            return;
+        }
+        String code = p[0], title = p[1], due = p[2];
+        if (!courses.containsKey(code)) {
+            System.out.println("No such course.");
+            return;
+        }
+        if (!isDate(due)) {
+            System.out.println("Use date like 2025-10-16.");
+            return;
+        }
+        tasks.add(new StudyTask(code, title, due, "TODO"));
+        System.out.println("Added taks for " + code + ": " + title + " (due " + due + ")");
+    }
+
+    private void planListCmd(String args) {
+        // plan-list  OR  plan-list <code>
+        String filterCode = args.isBlank() ? null : args.split("\\s+")[0];
+        List<StudyTask> list = new ArrayList<>();
+        for (StudyTask t : tasks) {
+            if (filterCode == null || t.getCourseCode().equals(filterCode)) list.add(t);
+        }
+        if (list.isEmpty()) {
+            System.out.println("No tasks" + (filterCode == null ? "" : " for " + filterCode) + ".");
+            return;
+        }
+        // sort by due date (string sort work for yyyy-mm-dd)
+        list.sort(Comparator.comparing(StudyTask::getDue).thenComparing(StudyTask::getCourseCode));
+        System.out.println("\nStudy Tasks" + (filterCode == null ? "" : " — " + filterCode));
+        System.out.println("---------------------------------------------------------------");
+        System.out.printf("%-3s %-10s %-18s %-12s %-6s%n", "#", "Course", "Title", "Due", "Status");
+        System.out.println("---------------------------------------------------------------");
+        for (int i = 0; i < list.size(); i++) {
+            StudyTask t = list.get(i);
+            System.out.printf("%-3d %-10s %-18s %-12s %-6s%n",
+                    (i + 1), t.getCourseCode(), shorten(t.getTitle(), 18), t.getDue(), t.getStatus());
+        }
+        System.out.println();
+    }
+
+    private void planDoneCmd(String args) {
+        // plan-done <code> <index>
+        
+    }
+
     private void saveCmd(String args) {
         if (args.isBlank()) {
             System.out.println("Usage: save <file.csv>");
@@ -485,9 +630,10 @@ public class Main {
 
         try {
             List<String> lines = Files.readAllLines(Path.of(fileName), StandardCharsets.UTF_8);
-            // Temporary holders while we rebuild
+
             Map<String, Course> newCourses = new HashMap<>();
             List<String[]> pendingAssigns = new ArrayList<>();
+            List<StudyTask> newTasks = new ArrayList<>();
 
             for (String raw : lines) {
                 String line = raw.trim();
@@ -562,7 +708,7 @@ public class Main {
     }
 
     // ---------------------------
-    // Small helpers
+    //          Helpers
     // ---------------------------
 
     private Integer tryParseInt(String s) {
@@ -570,6 +716,11 @@ public class Main {
     }
     private Double tryParseDouble(String s) {
         try { return Double.parseDouble(s); } catch (Exception e) { return null; }
+    }
+
+    private boolean isDate(String s) {
+        // very light check: yyyy-mm-dd with digits in right places
+        return s != null && s.matches("\\d{4}-\\d{2}-\\d{2}");
     }
 
     private String fmt2(double d) { return String.format(Locale.ROOT, "%.2f", d); }
@@ -588,4 +739,10 @@ public class Main {
         }
         return s.isEmpty() ? "0" : s;
     }
+
+    private String shorten(String s, int max) {
+        if (s == null) return "";
+        return s.length() <= max ? s : s.substring(0, Math.max(0, max - 1)) + "…";
+    }
+
 }

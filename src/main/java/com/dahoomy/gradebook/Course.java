@@ -46,6 +46,10 @@ public final class Course {
         assignments.add(a);
     }
 
+    public Assignment removeAssignment(int index) {
+        return assignments.remove(index);
+    }
+
     /** Sum of all assignment weights (should be 100 for a finished course). */
     public double totalWeight() {
         double sum = 0.0;

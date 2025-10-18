@@ -578,8 +578,62 @@ public class Main {
 
     private void planDoneCmd(String args) {
         // plan-done <code> <index>
-        
+        String[] p = args.split("\\s+");
+        if (p.length != 2) {
+            System.out.println("Usage: plan-done <code> <index>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        if (idx == null || idx < 1) {
+            System.out.println("Bad index.");
+            return;
+        }
+        // Operate only within that course view (index relative to filtered list)
+        List<StudyTask> list = new ArrayList<>();
+        for (StudyTask t : tasks) {
+            if (t.getCourseCode().equals(code)) list.add(t);
+        }
+        if (idx > list.size()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        StudyTask t = list.get(idx - 1);
+        t.setStatus("DONE");
+        System.out.println("Marked done: " + t.getTitle());
     }
+
+    private void planDelCmd(String args) {
+        // plan-del <code> <index>
+        String[] p = args.split("\\s+");
+        if (p.length != 2) {
+            System.out.println("Usage: plan-del <code> <index>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        if (idx == null || idx < 1) {
+            System.out.println("Bad index.");
+            return;
+        }
+        List<StudyTask> list = new ArrayList<>();
+        for (StudyTask t : tasks) {
+            if (t.getCourseCode().equals(code)) {
+                list.add(t);
+            }
+        }
+        if (idx > list.size()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        StudyTask t = list.get(idx - 1);
+        tasks.remove(t);
+        System.out.println("Deleted: " + t.getTitle());
+    }
+
+    // ---------------------------
+    // Save / Load (CSV)
+    // ---------------------------
 
     private void saveCmd(String args) {
         if (args.isBlank()) {
@@ -590,9 +644,9 @@ public class Main {
 
         try {
             List<String> lines = new ArrayList<>();
-            lines.add("# Gradebook CSV v1");
+            lines.add("# Gradebook CSV v2");
 
-            // Write all courses first (sorted by code)
+            // Courses
             List<String> codes = new ArrayList<>(courses.keySet());
             Collections.sort(codes);
             for (String code : codes) {
@@ -601,7 +655,7 @@ public class Main {
                 lines.add("COURSE," + c.getCode() + "," + c.getName() + "," + c.getCredits());
             }
 
-            // Then all assignment, grouped by course (also sorted)
+            // Assignments
             for (String code : codes) {
                 Course c = courses.get(code);
                 for (int i = 0; i < c.getAssignmentsCount(); i++) {
@@ -611,6 +665,10 @@ public class Main {
                               + trimZeros(a.getEarned()) + "," + trimZeros(a.getMax()) + ","
                               + trimZeros(a.getWeightPercent()));
                 }
+            }
+            // Tasks (planner)
+            for (StudyTask t : tasks) {
+                lines.add("TASK," + t.getCourseCode() + "," + t.getTitle() + "," + t.getDue() + "," + t.getStatus());
             }
 
             Files.write(Path.of(fileName), lines, StandardCharsets.UTF_8);
@@ -637,9 +695,7 @@ public class Main {
 
             for (String raw : lines) {
                 String line = raw.trim();
-                if (line.isEmpty()) continue;
-                if (line.startsWith("#")) continue; // allow comments/header
-
+                if (line.isEmpty() || line.startsWith("#")) continue;
                 String[] parts = line.split(",", -1); // keep empty fields if any
                 String kind = parts[0].trim().toUpperCase();
 
@@ -658,16 +714,31 @@ public class Main {
                     }
                     newCourses.put(code, new Course(code, name));
                     newCourses.get(code).setCredits(credits);
-                }
-                else if (kind.equals("ASSIGN")) {
+                } else if (kind.equals("ASSIGN")) {
                     // Expect: ASSIGN,courseCode,name,earned,max,weight
                     if (parts.length != 6) {
                         System.out.println("Skipping bad ASSIGN row: " + line);
                         continue;
                     }
                     pendingAssigns.add(parts);
-                }
-                else {
+                } else if (kind.equals("TASK")) {
+                    if (parts.length != 5) {
+                        System.out.println("Skipping bad TASK: " + line);
+                        continue;
+                    }
+                    String courseCode = parts[1].trim();
+                    String title = parts[2].trim();
+                    String due = parts[3].trim();
+                    String status = parts[4].trim().toUpperCase();
+                    if (!isDate(due)) {
+                        System.out.println("Skipping TASK (bad date): " + line);
+                        continue;
+                    }
+                    if (!(status.equals("TODO") || status.equals("DONE"))) {
+                        status = "TODO";
+                    }
+                    newTasks.add(new StudyTask(courseCode, title, due, status));
+                } else {
                     System.out.println("Skipping unknown row: " + line);
                 }
             }
@@ -679,8 +750,8 @@ public class Main {
                 Double earned = tryParseDouble(p[3].trim());
                 Double max = tryParseDouble(p[4].trim());
                 Double weight = tryParseDouble(p[5].trim());
-
                 Course c = newCourses.get(courseCode);
+
                 if (c == null) {
                     System.out.println("Skipping ASSIGN for missing course " + courseCode + ": " + name);
                     continue;
@@ -701,7 +772,17 @@ public class Main {
             // Replace current data
             courses.clear();
             courses.putAll(newCourses);
-            System.out.println("Loaded from: " + fileName + "  (courses: " + courses.size() + ")");
+            tasks.clear();
+
+            // Only keep tasks whose course exists
+            for (StudyTask t : newTasks) {
+                if (courses.containsKey(t.getCourseCode())) {
+                    tasks.add(t);
+                }
+            }
+
+            System.out.println("Loaded from: " + fileName +
+                    "  (courses: " + courses.size() + ", tasks: " + tasks.size() + ")");
         } catch (Exception e) {
             System.out.println("Failed to load: " + e.getMessage());
         }
@@ -744,5 +825,4 @@ public class Main {
         if (s == null) return "";
         return s.length() <= max ? s : s.substring(0, Math.max(0, max - 1)) + "…";
     }
-
 }

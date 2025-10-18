@@ -2,12 +2,12 @@ package com.dahoomy.gradebook;
 
 /**
  * A simple planner item connected to a course.
- * title, due date (yyyy-MM-dd), and a status flag.
+ * Keep it tiny: title, due date (ISO yyyy-MM-dd), and a status flag.
  */
 public class StudyTask {
     private final String courseCode;
     private String title;
-    private String due;      // date as text, e.g., 2025-10-16
+    private String due;   // date as text, e.g., 2025-10-16
     private String status;   // "TODO" or "DONE"
 
     public StudyTask(String courseCode, String title, String due, String status) {

@@ -4,36 +4,22 @@ import java.util.*;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
 
 /**
  * Gradebook (console) — now with:
- *  1) Edit/delete assignment commands + a summary table for each course
- *  2) Simple study planner (tasks with due dates) saved in the same CSV
+ * - Now includes: plan-undo and an OVERDUE flag in plan-list
  *
- * NEW COMMANDS (gradebook):
- *   edit-assign <code> <index> name|earned|max|weight <newValue>
- *   del-assign  <code> <index>
- *   set-weight  <code> <index> <newWeight>
- *   course      <code>     // pretty table for one course
- *
- * NEW COMMANDS (study planner):
- *   plan-add    <code> <title> <YYYY-MM-DD>         // add a task for a course
- *   plan-list   [code]                              // list tasks (optionally filter by course)
- *   plan-done   <code> <index>                      // mark a task done
- *   plan-del    <code> <index>                      // delete a task
- *
- * CSV format now has 3 row types:
- *   COURSE,code,name,credits
- *   ASSIGN,courseCode,name,earned,max,weight
- *   TASK,  courseCode,title,dueISO,status
+ * NEW COMMAND (study planner):
+ *   plan-undo   <code> <index>                      // set mark back to TODO
  *
  * NOTE: Keep commas out of names/titles to keep parsing simple.
  */
 public class Main {
 
-    // Our "database": course code -> Course object
+    // Our "database"
     private final Map<String, Course> courses = new HashMap<>();
-    private final List<StudyTask> tasks = new ArrayList<>(); // planner items across courses
+    private final List<StudyTask> tasks = new ArrayList<>();
 
     public static void main(String[] args) {
         new Main().run();
@@ -85,6 +71,7 @@ public class Main {
                     case "plan-add"    -> planAddCmd(args);
                     case "plan-list"   -> planListCmd(args);
                     case "plan-done"   -> planDoneCmd(args);
+                    case "plan-undo"   -> planUndoCmd(args);
                     case "plan-del"   -> planDelCmd(args);
 
                     // persistence
@@ -115,8 +102,9 @@ public class Main {
                   grade <code>                                                  — show weighted grade for course
                   gpa                                                           — compute GPA across all courses with credits
                   plan-add <code> <title> <YYYY-MM-DD>                          — add a task for a course
-                  plan-list [code]                                              — list tasks (optionally filter by course)
+                  plan-list [code]                                              — list tasks (optionally filter by course) (shows OVERDUE when a TODO is past due)
                   plan-done <code> <idx>                                        — mark a task done
+                  plan-undo <code> <idx>                                        — set mark back to TODO
                   plan-del <code> <idx                                          — delete a task
                   save <file.csv>                                               — saves info to file
                   load <file.csv>                                               — loads info from file
@@ -554,24 +542,34 @@ public class Main {
     private void planListCmd(String args) {
         // plan-list  OR  plan-list <code>
         String filterCode = args.isBlank() ? null : args.split("\\s+")[0];
-        List<StudyTask> list = new ArrayList<>();
-        for (StudyTask t : tasks) {
-            if (filterCode == null || t.getCourseCode().equals(filterCode)) list.add(t);
+        List<StudyTask> list;
+        if (filterCode == null) {
+            list = new ArrayList<>(tasks);
+            list.sort(Comparator
+                    .comparing(StudyTask::getDue)
+                    .thenComparing(StudyTask::getCourseCode)
+                    .thenComparing(StudyTask::getTitle));
+        } else {
+            list = tasksForCourseSorted(filterCode);
         }
+
         if (list.isEmpty()) {
             System.out.println("No tasks" + (filterCode == null ? "" : " for " + filterCode) + ".");
             return;
         }
+
         // sort by due date (string sort work for yyyy-mm-dd)
         list.sort(Comparator.comparing(StudyTask::getDue).thenComparing(StudyTask::getCourseCode));
         System.out.println("\nStudy Tasks" + (filterCode == null ? "" : " — " + filterCode));
         System.out.println("---------------------------------------------------------------");
-        System.out.printf("%-3s %-10s %-18s %-12s %-6s%n", "#", "Course", "Title", "Due", "Status");
+        System.out.printf("%-3s %-10s %-22s %-12s %-14s%n", "#", "Course", "Title", "Due", "Status");
         System.out.println("---------------------------------------------------------------");
         for (int i = 0; i < list.size(); i++) {
             StudyTask t = list.get(i);
-            System.out.printf("%-3d %-10s %-18s %-12s %-6s%n",
-                    (i + 1), t.getCourseCode(), shorten(t.getTitle(), 18), t.getDue(), t.getStatus());
+            boolean overdue = t.getStatus().equals("TODO") && isOverdue(t.getDue());
+            String statusCol = overdue ? (t.getStatus() + " (OVERDUE)") : t.getStatus();
+            System.out.printf("%-3d %-10s %-22s %-12s %-14s%n",
+                    (i + 1), t.getCourseCode(), shorten(t.getTitle(), 18), t.getDue(), statusCol);
         }
         System.out.println();
     }
@@ -590,10 +588,7 @@ public class Main {
             return;
         }
         // Operate only within that course view (index relative to filtered list)
-        List<StudyTask> list = new ArrayList<>();
-        for (StudyTask t : tasks) {
-            if (t.getCourseCode().equals(code)) list.add(t);
-        }
+        List<StudyTask> list = tasksForCourseSorted(code);
         if (idx > list.size()) {
             System.out.println("Index out of range.");
             return;
@@ -601,6 +596,29 @@ public class Main {
         StudyTask t = list.get(idx - 1);
         t.setStatus("DONE");
         System.out.println("Marked done: " + t.getTitle());
+    }
+
+    public void planUndoCmd(String args) {
+        // plan-undo <code> <index> set back to TODO
+        String[] p = args.split("\\s+");
+        if (p.length != 2) {
+            System.out.println("Usage: plan-undo <code> <index>");
+            return;
+        }
+        String code = p[0];
+        Integer idx = tryParseInt(p[1]);
+        if (idx == null || idx < 1) {
+            System.out.println("Bad index.");
+            return;
+        }
+        List<StudyTask> list = tasksForCourseSorted(code);
+        if (idx > list.size()) {
+            System.out.println("Index out of range.");
+            return;
+        }
+        StudyTask t = list.get(idx - 1);
+        t.setStatus("TODO");
+        System.out.println("Marked TODO: " + t.getTitle());
     }
 
     private void planDelCmd(String args) {
@@ -616,12 +634,7 @@ public class Main {
             System.out.println("Bad index.");
             return;
         }
-        List<StudyTask> list = new ArrayList<>();
-        for (StudyTask t : tasks) {
-            if (t.getCourseCode().equals(code)) {
-                list.add(t);
-            }
-        }
+        List<StudyTask> list = tasksForCourseSorted(code);
         if (idx > list.size()) {
             System.out.println("Index out of range.");
             return;
@@ -791,6 +804,29 @@ public class Main {
     // ---------------------------
     //          Helpers
     // ---------------------------
+
+    // Return tasks for a course, sorted the same way plan-list prints them.
+    // We sort by due date, then by title.
+    private List<StudyTask> tasksForCourseSorted(String courseCode) {
+        List<StudyTask> list = new ArrayList<>();
+        for (StudyTask t : tasks) {
+            if (t.getCourseCode().equals(courseCode)) list.add(t);
+        }
+        list.sort(Comparator
+                .comparing(StudyTask::getDue)
+                .thenComparing(StudyTask::getTitle));
+        return list;
+    }
+
+    // A TODO task is "overdue" if its due date is before today.
+    private boolean isOverdue(String dues) {
+        try {
+            LocalDate due = LocalDate.parse(dues);
+            return due.isBefore(LocalDate.now());
+        } catch (Exception e) {
+            return false; // if fails, don't mark overdue
+        }
+    }
 
     private Integer tryParseInt(String s) {
         try { return Integer.parseInt(s); } catch (Exception e) { return null; }
